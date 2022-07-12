@@ -5,6 +5,16 @@
 
 ![](https://i.imgur.com/2sy70jO.png)
 
+## Install
+
+### Arch
+
+[breeze-rofi-theme-git on AUR](https://aur.archlinux.org/packages/breeze-rofi-theme-git)
+
+```bash
+yay -S breeze-rofi-theme-git
+```
+
 ## Manual build
 
 ```bash
