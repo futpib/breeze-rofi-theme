@@ -2,9 +2,7 @@
 const gulp = require('gulp');
 const transform = require('gulp-transform');
 const rename = require('gulp-rename');
-const zip = require('gulp-zip');
-const unzip = require('gulp-unzip');
-const flatmap = require('gulp-flatmap');
+const fs = require('fs/promises');
 
 const {
 	pipe,
@@ -28,7 +26,7 @@ const ini = require('ini');
 
 const color = require('color');
 
-const jimp = require('jimp');
+const postcss = require('postcss');
 
 const mapping = require('./mapping');
 
@@ -39,7 +37,7 @@ const hex = x => {
 		x = color(x.split(',').map(x => parseInt(x, 10)));
 	}
 	return x.hex ?
-		(x.hex() + Math.ceil(255 * parseFloat(x.alpha())).toString(16).padStart(2, '0')) :
+		x.hex() :
 		x;
 };
 
@@ -84,7 +82,7 @@ const infiniteObject = new Proxy(() => infiniteObject, {
 	},
 });
 
-const breezeToTelegram = pipe(
+const breezeToRofi = pipe(
 	breeze => mapping({ breeze, alpha, mix, overlay }),
 	evalStringRefs,
 	evalStringRefs,
@@ -94,9 +92,9 @@ const breezeToTelegram = pipe(
 	evalThunks,
 );
 
-const breezeToTelegramColors = pipe(
+const breezeToRasi = pipe(
 	parseBreezeColors,
-	breezeToTelegram,
+	breezeToRofi,
 	mapObjIndexed((v, k) => {
 		if (!v) {
 			console.warn('color not resolved:', k);
@@ -104,20 +102,48 @@ const breezeToTelegramColors = pipe(
 		}
 		return v;
 	}),
-	pipe(
-		toPairs,
-		map(join(': ')),
-		map(s => s + ';\n'),
-		join(''),
-	),
-);
+	async (colors) => {
+		const templateRasi = await fs.readFile('./rofi/themes/android_notification.rasi', 'utf8');
 
-const breezeToTelegramBg = pipe(
-	parseBreezeColors,
-	breezeToTelegram,
-	tg => jimp
-		.create(256, 256, tg.historyComposeAreaBg)
-		.then(img => img.getBufferAsync('image/png'))
+		const result = await postcss([
+			{
+				postcssPlugin: 'dummy',
+				Declaration(node, { Declaration }) {
+					if (node.parent.selector !== '*') {
+						return;
+					}
+
+					if (node._processed) {
+						return;
+					}
+
+					if (!Number.isNaN(Number.parseInt(node.value, 10))) {
+						return;
+					}
+
+					if (colors[node.prop] && colors[node.prop] != node.value) {
+						node.replaceWith(new Declaration({
+							prop: node.prop,
+							value: colors[node.prop],
+							_processed: true,
+						}));
+						return;
+					}
+
+					if (node.value !== '#00ff00') {
+						console.warn('no color for:', node.prop, node.value);
+						node.replaceWith(new Declaration({
+							prop: node.prop,
+							value: '#00ff00',
+							_processed: true,
+						}));
+					}
+				},
+			},
+		]).process(templateRasi, { from: undefined });
+
+		return result.toString();
+	},
 );
 
 const breezeToHexJSON = pipe(
@@ -126,87 +152,17 @@ const breezeToHexJSON = pipe(
 );
 
 gulp.task(
-	'breeze-to-telegram-colors',
+	'breeze-to-rofi',
 	() => gulp
 		.src('./breeze/colors/*.colors')
-		.pipe(transform('utf8', breezeToTelegramColors))
+		.pipe(transform('utf8', breezeToRasi))
 		.pipe(rename(path => {
-			path.dirname += '/' + path.basename;
-			path.basename = 'colors';
-			path.extname = '.tdesktop-theme';
+			path.extname = '.rasi';
 			return path;
 		}))
 		.pipe(gulp.dest('./dist/'))
 );
 
-gulp.task(
-	'breeze-to-telegram-bg',
-	() => gulp
-		.src('./breeze/colors/*.colors')
-		.pipe(transform(breezeToTelegramBg))
-		.pipe(rename(path => {
-			path.dirname += '/' + path.basename;
-			path.basename = 'tiled';
-			path.extname = '.png';
-			return path;
-		}))
-		.pipe(gulp.dest('./dist/'))
-);
-
-// This task is only useful for manually visually comparing colors in `rainbow-mode`
-gulp.task(
-	'breeze-to-hex-json',
-	() => gulp
-		.src('./breeze/colors/*.colors')
-		.pipe(transform('utf8', breezeToHexJSON))
-		.pipe(rename({ extname: '.hex.json' }))
-		.pipe(gulp.dest('./dist/'))
-);
-
-gulp.task(
-	'compare-tdesktop-to-mapping',
-	() => gulp
-		.src('./tdesktop/Telegram/Resources/night.tdesktop-theme')
-		.pipe(unzip({
-			filter: ({ path }) => path === 'colors.tdesktop-theme',
-		}))
-		.pipe(transform('utf8', pipe(
-			x => (console.log(x), x),
-			replace(/\/\*[\s\S]+\*\//gm, ''),
-			replace(/^\/\/.*/gm, ''),
-			split('\n'),
-			filter(Boolean),
-			map(split(': ')),
-			fromPairs,
-			tdesktop => {
-				const tdesktopKeys = keys(tdesktop);
-				const mappingKeys = keys(mapping(infiniteObject));
-				const missingKeys = pipe(
-					map(x => [ x, tdesktop[x] ]),
-					fromPairs,
-				)(difference(tdesktopKeys, mappingKeys));
-				const redundantKeys = difference(mappingKeys, tdesktopKeys);
-				console.log({ missingKeys, redundantKeys });
-				return '';
-			},
-		)))
-);
-
-gulp.task(
-	'breeze-to-telegram',
-	gulp.series(
-		gulp.parallel('breeze-to-telegram-colors', 'breeze-to-telegram-bg'),
-		() => gulp
-			.src('./dist/*')
-			.pipe(flatmap(
-				(stream, dir) => gulp
-					.src(dir.path + '/*')
-					.pipe(zip(dir.relative + '.tdesktop-theme'))
-			))
-			.pipe(gulp.dest('./dist/'))
-	)
-);
-
-gulp.task('default', gulp.series('breeze-to-telegram'));
+gulp.task('default', gulp.series('breeze-to-rofi'));
 
 gulp.on('error', console.error);
