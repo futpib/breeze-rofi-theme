@@ -1,5 +1,5 @@
 # Breeze (Vanilla, Dark, Light and High Contrast) for Rofi
-> Rofi theme to match KDE Breeze desktop color schemes.
+> [Rofi](https://github.com/davatorium/rofi) theme to match KDE Breeze desktop color schemes.
 
 ## Preview
 
